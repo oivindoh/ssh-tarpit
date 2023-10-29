@@ -1,5 +1,5 @@
-FROM docker.io/python:3.8-alpine
-LABEL maintainer="Vladislav Yarmak <vladislav-ex-src@vm-0.com>"
+FROM docker.io/python:3.12.0
+LABEL upstream="Vladislav Yarmak <vladislav-ex-src@vm-0.com>"
 
 ARG UID=18722
 ARG USER=ssh-tarpit
