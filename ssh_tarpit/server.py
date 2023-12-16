@@ -4,10 +4,12 @@ import weakref
 import random
 import logging
 import time
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 client_connections = Counter('connections', 'Number of connections per source', ['source'])
 client_time = Counter('wasted_time', 'Time wasted per source', ['source'])
+clients_trapped = Gauge('trapped', 'Number of currently trapped sources')
+
 
 connections = {}
 
@@ -53,6 +55,7 @@ class TarpitServer:
         peer_addr = writer.transport.get_extra_info('peername')
         client_start = time.time()
         client_connections.labels(source=str(peer_addr[0])).inc()
+        clients_trapped.inc()
         self._logger.info("Client %s connected", str(peer_addr))
         try:
             while True:
@@ -73,6 +76,7 @@ class TarpitServer:
             client_stop = time.time()
             wasted_time = client_stop - client_start
             client_time.labels(source=str(peer_addr[0])).inc(wasted_time)
+            clients_trapped.dec()
             self._logger.info(f"Client {str(peer_addr)} disconnected after {wasted_time}s")
 
     async def start(self):
