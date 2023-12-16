@@ -3,6 +3,13 @@ import socket
 import weakref
 import random
 import logging
+import time
+from prometheus_client import Counter
+
+client_connections = Counter('connections', 'Number of connections per source', ['source'])
+client_time = Counter('wasted_time', 'Time wasted per source', ['source'])
+
+connections = {}
 
 class TarpitServer:
     SHUTDOWN_TIMEOUT = 5
@@ -44,6 +51,8 @@ class TarpitServer:
                 finally:
                     direct_sock.detach()
         peer_addr = writer.transport.get_extra_info('peername')
+        client_start = time.time()
+        client_connections.labels(source=str(peer_addr)).inc()
         self._logger.info("Client %s connected", str(peer_addr))
         try:
             while True:
@@ -61,7 +70,10 @@ class TarpitServer:
             else:
                 raise
         finally:
-            self._logger.info("Client %s disconnected", str(peer_addr))
+            client_stop = time.time()
+            wasted_time = client_stop - client_start
+            client_connections.labels(source=str(peer_addr)).inc(wasted_time)
+            self._logger.info(f"Client {str(peer_addr)} disconnected after {wasted_time}s")
 
     async def start(self):
         def _spawn(reader, writer):
