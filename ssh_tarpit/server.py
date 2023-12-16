@@ -52,7 +52,7 @@ class TarpitServer:
                     direct_sock.detach()
         peer_addr = writer.transport.get_extra_info('peername')
         client_start = time.time()
-        client_connections.labels(source=str(peer_addr)).inc()
+        client_connections.labels(source=str(peer_addr[0])).inc()
         self._logger.info("Client %s connected", str(peer_addr))
         try:
             while True:
@@ -72,7 +72,7 @@ class TarpitServer:
         finally:
             client_stop = time.time()
             wasted_time = client_stop - client_start
-            client_time.labels(source=str(peer_addr)).inc(wasted_time)
+            client_time.labels(source=str(peer_addr[0])).inc(wasted_time)
             self._logger.info(f"Client {str(peer_addr)} disconnected after {wasted_time}s")
 
     async def start(self):
