@@ -72,7 +72,7 @@ class TarpitServer:
         finally:
             client_stop = time.time()
             wasted_time = client_stop - client_start
-            client_connections.labels(source=str(peer_addr)).inc(wasted_time)
+            client_time.labels(source=str(peer_addr)).inc(wasted_time)
             self._logger.info(f"Client {str(peer_addr)} disconnected after {wasted_time}s")
 
     async def start(self):

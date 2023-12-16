@@ -174,6 +174,9 @@ def main():
             res = False
         logger.info("uvloop" + ("" if res else " NOT") + " activated.")
 
+        from prometheus_client import start_http_server
+        start_http_server(8000)
+
         loop = asyncio.get_event_loop()
         loop.run_until_complete(amain(args, loop))
         loop.close()

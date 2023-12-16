@@ -1,7 +1,7 @@
 ssh-tarpit
 ==========
 
-SSH tarpit that slowly sends an endless banner. [Original idea by Chris Wellons](https://nullprogram.com/blog/2019/03/22/). This is Python 3 implementation focused on safety and correctness.
+SSH tarpit that slowly sends an endless banner. [Original idea by Chris Wellons](https://nullprogram.com/blog/2019/03/22/). This is Python 3 implementation initially focused on safety and correctness, but now focusing on providing data for other integrations through prometheus metrics showing connection attempts and total time wasted for each source address.
 
 ## Requirements
 
@@ -9,14 +9,6 @@ SSH tarpit that slowly sends an endless banner. [Original idea by Chris Wellons]
 
 ## Installation
 
-
-### From PyPI
-
-Standard Python package installation. This package is available on PyPI:
-
-```
-pip3 install ssh-tarpit
-```
 
 ### From source
 
