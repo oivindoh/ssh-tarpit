@@ -1,0 +1,12 @@
+services:
+  ssh-tarpit:
+    build: ./
+    ports:
+      - "8000:8000"
+      - "2222:2222"
+    volumes:
+      - "./GeoLite2-City.mmdb:/GeoLite2-City.mmdb"
+    develop:
+      watch:
+        - action: rebuild
+          path: ./ssh_tarpit

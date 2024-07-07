@@ -4,12 +4,15 @@ import weakref
 import random
 import logging
 import time
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Summary
+import maxminddb
+from os import path,getenv
 
-client_connections = Counter('connections', 'Number of connections per source', ['source'])
-client_time = Counter('wasted_time', 'Time wasted per source', ['source'])
+
+client_connections = Counter('connections', 'Number of connections per source', ['source','latitude','longitude'])
+client_time = Counter('wasted_time', 'Time wasted per source', ['source','latitude','longitude'])
 clients_trapped = Gauge('trapped', 'Number of currently trapped sources')
-
+client_time_histogram = Summary('trapped_histogram', 'trapped_histogram', ['source','latitude','longitude'])
 
 connections = {}
 
@@ -29,6 +32,14 @@ class TarpitServer:
         self._dualstack = dualstack
         self._interval = interval
         self._children = weakref.WeakSet()
+        self._mmdb_path = getenv('TARPIT_MMDB_PATH','/GeoLite2-City.mmdb')
+        if path.isfile(self._mmdb_path):
+            self._mm = maxminddb.open_database(self._mmdb_path)
+            self._enrich = True
+            self._logger.info("IP enrichment enabled")
+        else:
+            self._enrich = False
+            
 
     async def stop(self):
         self._server.close()
@@ -53,8 +64,27 @@ class TarpitServer:
                 finally:
                     direct_sock.detach()
         peer_addr = writer.transport.get_extra_info('peername')
+        src_peer = peer_addr[0]
+        src_port = peer_addr[1]
+        src_latitude = "0.0"
+        src_longitude = "0.0"
         client_start = time.time()
-        client_connections.labels(source=str(peer_addr[0])).inc()
+        if self._enrich:
+            try:
+                self._logger.info('attempting enrich')
+                geodata = self._mm.get(str(src_peer))
+                if "location" in geodata.keys():
+                    src_latitude = geodata['location']['latitude']
+                    src_longitude = geodata['location']['longitude']
+            except:
+                self._logger.info('failed to look up geodata')
+                pass
+        labels = {
+            "source": src_peer,
+            "longitude": src_longitude,
+            "latitude": src_latitude
+        }
+        client_connections.labels(**labels).inc()
         clients_trapped.inc()
         self._logger.info("Client %s connected", str(peer_addr))
         try:
@@ -73,10 +103,10 @@ class TarpitServer:
             else:
                 raise
         finally:
-            client_stop = time.time()
-            wasted_time = client_stop - client_start
-            client_time.labels(source=str(peer_addr[0])).inc(wasted_time)
+            wasted_time = time.time() - client_start
+            client_time.labels(**labels).inc(wasted_time)
             clients_trapped.dec()
+            client_time_histogram.labels(**labels).observe(wasted_time)
             self._logger.info(f"Client {str(peer_addr)} disconnected after {wasted_time}s")
 
     async def start(self):
