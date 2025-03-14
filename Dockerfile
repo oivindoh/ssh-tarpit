@@ -1,29 +1,21 @@
-FROM docker.io/python:3.12.0
-LABEL upstream="Vladislav Yarmak <vladislav-ex-src@vm-0.com>"
-ENV PROMETHEUS_DISABLE_CREATED_SERIES=True
+FROM debian:12-slim AS build
+RUN apt-get update && \
+    apt-get install --no-install-suggests --no-install-recommends --yes python3 python3-venv curl ca-certificates && \
+    python3 -m venv /venv && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv && \
+    rm -rf /root/.local
 
-ARG UID=18722
-ARG USER=ssh-tarpit
-ARG GID=18722
+FROM build AS build-venv
+COPY requirements.txt /requirements.txt
+COPY . /src
+RUN . /venv/bin/activate && uv pip install --disable-pip-version-check -r /requirements.txt && \
+    uv pip install /src
 
-RUN true \
-   && addgroup --gid "$GID" "$USER" \
-   && adduser \
-        --disabled-password \
-        --gecos "" \
-        --ingroup "$USER" \
-        --no-create-home \
-        --uid "$UID" \
-        "$USER" \
-   && true
-COPY requirements.txt /
-RUN pip install -r requirements.txt
-
-COPY . /build
-WORKDIR /build
-RUN pip3 install --no-cache-dir .
-
-USER $USER
-
+FROM gcr.io/distroless/python3-debian12
+COPY --from=build-venv /venv /venv
+ENV PYTHONUNBUFFERED=1
+WORKDIR /
 EXPOSE 2222/tcp
-ENTRYPOINT [ "ssh-tarpit", "-a", "0.0.0.0" ]
+EXPOSE 8000/tcp
+ENTRYPOINT [ "/venv/bin/ssh-tarpit", "-a", "0.0.0.0" ]
