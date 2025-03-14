@@ -8,14 +8,13 @@ RUN apt-get update && \
 
 FROM build AS build-venv
 COPY requirements.txt /requirements.txt
-COPY . /src
-RUN . /venv/bin/activate && uv pip install --disable-pip-version-check -r /requirements.txt && \
-    uv pip install /src
+RUN . /venv/bin/activate && uv pip install --disable-pip-version-check -r /requirements.txt
 
 FROM gcr.io/distroless/python3-debian12
 COPY --from=build-venv /venv /venv
+COPY ssh-teepee.py /
 ENV PYTHONUNBUFFERED=1
 WORKDIR /
 EXPOSE 2222/tcp
-EXPOSE 8000/tcp
-ENTRYPOINT [ "/venv/bin/ssh-tarpit", "-a", "0.0.0.0" ]
+USER 65532
+ENTRYPOINT [ "/venv/bin/python3", "/ssh-teepee.py", "-a", "0.0.0.0" ]

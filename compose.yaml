@@ -1,12 +1,30 @@
 services:
+  db:
+    image: postgres:17
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_USER: postgres
+
   ssh-tarpit:
     build: ./
     ports:
       - "8000:8000"
       - "2222:2222"
+    environment:
+      - TARPIT_MMDB_PATH=/GeoLite2-City.mmdb
+      - TARPIT_DATABASE_HOST=db
+      - TARPIT_DATABASE_PASSWORD=example
+      - TARPIT_DATABASE_USER=postgres
     volumes:
       - "./GeoLite2-City.mmdb:/GeoLite2-City.mmdb"
+      - "./GeoLite2-Country.mmdb:/GeoLite2-Country.mmdb"
+      - 'geoipupdate_data:/usr/share/GeoIP'
     develop:
       watch:
         - action: rebuild
-          path: ./ssh_tarpit
+          path: ./ssh-teepee.py
+
+volumes:
+  geoipupdate_data:
+    driver: local
