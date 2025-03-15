@@ -72,16 +72,19 @@ def upsert_connection_start(conn, client_ip, country_code, latitude, longitude):
     now = datetime.utcnow()
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO ssh_connections (client_ip, first_seen, last_seen, country_code, latitude, longitude)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO ssh_connections (client_ip, first_seen, last_seen, country_code, latitude, longitude, active_connections)
+            VALUES (%s, %s, %s, %s, %s, %s, 1)
             ON CONFLICT (client_ip)
             DO UPDATE SET
                 connections = ssh_connections.connections + 1,
                 last_seen = EXCLUDED.last_seen,
                 active_connections = ssh_connections.active_connections + 1
-            WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
+            WHERE ssh_connections.client_ip = EXCLUDED.client_ip
+            RETURNING active_connections;
         """, (client_ip, now, now, country_code, latitude, longitude))
+        active = cur.fetchone()[0]
         conn.commit()
+        print(f"Started connection for {client_ip}, active_connections now {active}")
 
 def upsert_connection_end(conn, client_ip, duration_seconds):
     now = datetime.utcnow()
