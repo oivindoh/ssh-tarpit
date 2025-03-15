@@ -53,11 +53,11 @@ def init_db():
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ssh_connections (
-                id UUID PRIMARY KEY,
-                client_ip INET NOT NULL,
-                start_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                end_time TIMESTAMP WITH TIME ZONE,
-                duration INTERVAL,
+                client_ip INET PRIMARY KEY,
+                connections BIGINT DEFAULT 1,
+                first_seen TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_seen TIMESTAMP WITH TIME ZONE NOT NULL,
+                total_time_wasted BIGINT DEFAULT 0,
                 country_code CHAR(2),
                 latitude DOUBLE PRECISION,
                 longitude DOUBLE PRECISION
@@ -67,27 +67,30 @@ def init_db():
     conn.close()
 
 # Insert a new connection
-def log_connection_start(conn, client_ip, country_code, latitude, longitude):
+def upsert_connection(conn, client_ip, country_code, latitude, longitude, duration_seconds=None):
+    now = datetime.utcnow()
     with conn.cursor() as cur:
-        conn_id = uuid.uuid4()
-        start_time = datetime.utcnow()
-        cur.execute("""
-            INSERT INTO ssh_connections (id, client_ip, start_time, country_code, latitude, longitude)
-            VALUES (%s, %s, %s, %s, %s, %s);
-        """, (str(conn_id), client_ip, start_time, country_code, latitude, longitude))
-        conn.commit()
-    return conn_id
-
-# Update connection on close
-def log_connection_end(conn, conn_id):
-    with conn.cursor() as cur:
-        end_time = datetime.utcnow()
-        cur.execute("""
-            UPDATE ssh_connections
-            SET end_time = %s,
-                duration = %s - start_time
-            WHERE id = %s;
-        """, (end_time, end_time, str(conn_id)))
+        if duration_seconds is None:  # First connection or no duration yet
+            cur.execute("""
+                INSERT INTO ssh_connections (client_ip, first_seen, last_seen, country_code, latitude, longitude)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (client_ip)
+                DO UPDATE SET
+                    connections = ssh_connections.connections + 1,
+                    last_seen = EXCLUDED.last_seen
+                WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
+            """, (client_ip, now, now, country_code, latitude, longitude))
+        else:  # Update with duration
+            cur.execute("""
+                INSERT INTO ssh_connections (client_ip, first_seen, last_seen, total_time_wasted, country_code, latitude, longitude)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (client_ip)
+                DO UPDATE SET
+                    connections = ssh_connections.connections + 1,
+                    last_seen = EXCLUDED.last_seen,
+                    total_time_wasted = ssh_connections.total_time_wasted + EXCLUDED.total_time_wasted
+                WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
+            """, (client_ip, now, now, duration_seconds, country_code, latitude, longitude))
         conn.commit()
 
 # Get geodata from IP (extract country code and coordinates)
@@ -114,14 +117,13 @@ async def handle_client(reader, writer, db_conn):
     client_ip = client_addr[0]
     print(f"New connection from {client_ip}")
 
-    # Log connection start
+    start_time = datetime.utcnow()
     country_code, latitude, longitude = get_geodata(client_ip)
-    conn_id = log_connection_start(db_conn, client_ip, country_code, latitude, longitude)
+    upsert_connection(db_conn, client_ip, country_code, latitude, longitude)  # Initial upsert
 
-    # Disable reading
     writer.transport.pause_reading()
     sock = writer.transport.get_extra_info('socket')
-    if sock is not None:
+    if sock:
         try:
             sock.shutdown(socket.SHUT_RD)
         except (TypeError, OSError):
@@ -133,7 +135,7 @@ async def handle_client(reader, writer, db_conn):
 
     try:
         while True:
-            await asyncio.sleep(1)  # Send every 1 second
+            await asyncio.sleep(1)
             writer.write(b'%.8x\r\n' % random.randrange(2**32))
             await writer.drain()
             #print(f"Sent data to {client_ip}")
@@ -143,17 +145,17 @@ async def handle_client(reader, writer, db_conn):
         print(f"Terminating connection with {client_ip} due to: {e}")
     except OSError as e:
         print(f"OSError with {client_ip}: {e}")
-        if e.errno == 107:  # ENOTCONN
+        if e.errno == 107:
             pass
         else:
             raise
     finally:
-        #print(f"Entering finally block for {client_ip}")
-        log_connection_end(db_conn, conn_id)
-        writer.transport.close()  # Close the transport
-        # Skip wait_closed() to avoid BrokenPipeError
-        print(f"Connection from {client_ip} closed")
-
+        end_time = datetime.utcnow()
+        duration_seconds = int((end_time - start_time).total_seconds())
+        upsert_connection(db_conn, client_ip, country_code, latitude, longitude, duration_seconds)
+        print(f"Entering finally block for {client_ip}")
+        writer.transport.close()
+        print(f"Connection from {client_ip} closed (wasted {duration_seconds} seconds)")
 
 # Main server
 async def main():
