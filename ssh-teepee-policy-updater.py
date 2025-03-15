@@ -11,7 +11,7 @@ DB_USER = os.getenv("DB_USER", "your-db-user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "your-db-password")
 
 # Query to fetch IP addresses from ssh_connections
-QUERY = "SELECT DISTINCT ip_address FROM ssh_connections WHERE ip_address IS NOT NULL"
+QUERY = "SELECT DISTINCT client_ip FROM ssh_connections WHERE client_ip IS NOT NULL"
 
 # Namespace where ingress-nginx lives
 NAMESPACE = "ingress-nginx"  # Adjust if different
