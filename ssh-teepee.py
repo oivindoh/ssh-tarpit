@@ -48,6 +48,7 @@ def wait_for_db(max_attempts=10, initial_delay=1):
             delay *= 2  # Exponential backoff: 1s, 2s, 4s, 8s, etc.
 
 # Initialize the database table
+# TODO: set all active_connections to zero on startup
 def init_db():
     conn = psycopg2.connect(**DB_CONFIG)
     with conn.cursor() as cur:
@@ -58,6 +59,7 @@ def init_db():
                 first_seen TIMESTAMP WITH TIME ZONE NOT NULL,
                 last_seen TIMESTAMP WITH TIME ZONE NOT NULL,
                 total_time_wasted BIGINT DEFAULT 0,
+                active_connections BIGINT DEFAULT 0,
                 country_code CHAR(2),
                 latitude DOUBLE PRECISION,
                 longitude DOUBLE PRECISION
@@ -66,31 +68,32 @@ def init_db():
         conn.commit()
     conn.close()
 
-# Insert a new connection
-def upsert_connection(conn, client_ip, country_code, latitude, longitude, duration_seconds=None):
+def upsert_connection_start(conn, client_ip, country_code, latitude, longitude):
     now = datetime.utcnow()
     with conn.cursor() as cur:
-        if duration_seconds is None:  # First connection or no duration yet
-            cur.execute("""
-                INSERT INTO ssh_connections (client_ip, first_seen, last_seen, country_code, latitude, longitude)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (client_ip)
-                DO UPDATE SET
-                    connections = ssh_connections.connections + 1,
-                    last_seen = EXCLUDED.last_seen
-                WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
-            """, (client_ip, now, now, country_code, latitude, longitude))
-        else:  # Update with duration
-            cur.execute("""
-                INSERT INTO ssh_connections (client_ip, first_seen, last_seen, total_time_wasted, country_code, latitude, longitude)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (client_ip)
-                DO UPDATE SET
-                    connections = ssh_connections.connections + 1,
-                    last_seen = EXCLUDED.last_seen,
-                    total_time_wasted = ssh_connections.total_time_wasted + EXCLUDED.total_time_wasted
-                WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
-            """, (client_ip, now, now, duration_seconds, country_code, latitude, longitude))
+        cur.execute("""
+            INSERT INTO ssh_connections (client_ip, first_seen, last_seen, country_code, latitude, longitude)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (client_ip)
+            DO UPDATE SET
+                connections = ssh_connections.connections + 1,
+                last_seen = EXCLUDED.last_seen,
+                active_connections = ssh_connections.active_connections + 1
+            WHERE ssh_connections.client_ip = EXCLUDED.client_ip;
+        """, (client_ip, now, now, country_code, latitude, longitude))
+        conn.commit()
+
+def upsert_connection_end(conn, client_ip, duration_seconds):
+    now = datetime.utcnow()
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE ssh_connections
+            SET
+                last_seen = %s,
+                total_time_wasted = total_time_wasted + %s,
+                active_connections = GREATEST(active_connections - 1, 0)
+            WHERE client_ip = %s;
+        """, (now, duration_seconds, client_ip))
         conn.commit()
 
 # Get geodata from IP (extract country code and coordinates)
@@ -111,7 +114,6 @@ def get_geodata(ip):
         print(e)
         return None, None, None  # Handle missing geodata
 
-# Async SSH tarpit handler
 async def handle_client(reader, writer, db_conn):
     client_addr = writer.get_extra_info('peername')
     client_ip = client_addr[0]
@@ -119,7 +121,7 @@ async def handle_client(reader, writer, db_conn):
 
     start_time = datetime.utcnow()
     country_code, latitude, longitude = get_geodata(client_ip)
-    upsert_connection(db_conn, client_ip, country_code, latitude, longitude)  # Initial upsert
+    upsert_connection_start(db_conn, client_ip, country_code, latitude, longitude)
 
     writer.transport.pause_reading()
     sock = writer.transport.get_extra_info('socket')
@@ -152,7 +154,7 @@ async def handle_client(reader, writer, db_conn):
     finally:
         end_time = datetime.utcnow()
         duration_seconds = int((end_time - start_time).total_seconds())
-        upsert_connection(db_conn, client_ip, country_code, latitude, longitude, duration_seconds)
+        upsert_connection_end(db_conn, client_ip, duration_seconds)
         print(f"Entering finally block for {client_ip}")
         writer.transport.close()
         print(f"Connection from {client_ip} closed (wasted {duration_seconds} seconds)")
