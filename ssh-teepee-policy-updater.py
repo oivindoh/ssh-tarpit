@@ -16,7 +16,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "your-db-password")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 # Query to fetch IP addresses from ssh_connections
-QUERY = "SELECT DISTINCT client_ip FROM ssh_connections WHERE client_ip IS NOT NULL"
+QUERY = "SELECT client_ip FROM ssh_connections WHERE client_ip IS NOT NULL"
 
 # Namespace where ingress-nginx lives
 NAMESPACE = "ingress-nginx"  # Adjust if different
