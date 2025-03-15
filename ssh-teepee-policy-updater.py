@@ -51,14 +51,16 @@ def normalize_ip(ip):
         ip_obj = ipaddress.ip_address(base_ip)
 
         if ip_obj.version == 4:
-            # Pure IPv4 or IPv4-mapped converted to pure IPv4
+            # Pure IPv4
             return f"{ip_obj}/32" if cidr is None else f"{ip_obj}/{cidr}"
         elif ip_obj.version == 6:
-            # Check if it’s an IPv4-mapped IPv6 address
-            if ip_obj.is_ipv4_mapped():
-                # Extract the IPv4 portion and return as pure IPv4
-                ipv4 = ip_obj.ipv4_mapped
-                return f"{ipv4}/32" if cidr is None else f"{ipv4}/{cidr}"
+            # Check if it’s an IPv4-mapped IPv6 address (starts with ::ffff:)
+            if base_ip.startswith("::ffff:"):
+                # Extract the IPv4 portion
+                ipv4_str = base_ip.replace("::ffff:", "")
+                ipv4_obj = ipaddress.ip_address(ipv4_str)
+                if ipv4_obj.version == 4:
+                    return f"{ipv4_obj}/32" if cidr is None else f"{ipv4_obj}/{cidr}"
             # Pure IPv6 address
             return f"{ip_obj}/128" if cidr is None else f"{ip_obj}/{cidr}"
     except ValueError:
