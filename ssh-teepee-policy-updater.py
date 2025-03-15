@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import psycopg2
 import os
+import ipaddress
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
@@ -28,8 +29,8 @@ def fetch_ip_addresses():
         cur = conn.cursor()
         cur.execute(QUERY)
         rows = cur.fetchall()
-        # Extract IPs and append /32 for CIDR notation
-        ip_list = [f"{row[0]}/32" for row in rows]
+        # Process IPs to normalize IPv4 and preserve IPv6
+        ip_list = [normalize_ip(row[0]) for row in rows]
         cur.close()
         conn.close()
         return ip_list
@@ -37,7 +38,39 @@ def fetch_ip_addresses():
         print(f"Error fetching IPs: {e}")
         return []
 
+def normalize_ip(ip):
+    """Normalize IP addresses: IPv4-mapped to pure IPv4, IPv6 preserved."""
+    try:
+        # If it’s already a CIDR, split base IP and mask
+        if "/" in ip:
+            base_ip, cidr = ip.split("/", 1)
+        else:
+            base_ip, cidr = ip, None
+
+        # Parse the base IP
+        ip_obj = ipaddress.ip_address(base_ip)
+
+        if ip_obj.version == 4:
+            # Pure IPv4 or IPv4-mapped converted to pure IPv4
+            return f"{ip_obj}/32" if cidr is None else f"{ip_obj}/{cidr}"
+        elif ip_obj.version == 6:
+            # Check if it’s an IPv4-mapped IPv6 address
+            if ip_obj.is_ipv4_mapped():
+                # Extract the IPv4 portion and return as pure IPv4
+                ipv4 = ip_obj.ipv4_mapped
+                return f"{ipv4}/32" if cidr is None else f"{ipv4}/{cidr}"
+            # Pure IPv6 address
+            return f"{ip_obj}/128" if cidr is None else f"{ip_obj}/{cidr}"
+    except ValueError:
+        print(f"Skipping invalid IP address: {ip}")
+        return None
+
 def generate_cilium_policy(ip_list):
+    # Filter out None values from invalid IPs
+    valid_ips = [ip for ip in ip_list if ip is not None]
+    if not valid_ips:
+        print("No valid IP addresses to include in policy.")
+        return None
     return {
         "apiVersion": "cilium.io/v2",
         "kind": "CiliumNetworkPolicy",
@@ -53,14 +86,17 @@ def generate_cilium_policy(ip_list):
             },
             "ingressDeny": [
                 {
-                    "fromCIDR": ip_list
+                    "fromCIDR": valid_ips
                 }
             ]
         }
     }
 
 def apply_policy(policy):
-    # Load in-cluster config (assumes the pod has a service account with permissions)
+    if policy is None:
+        print("No policy to apply due to lack of valid IPs.")
+        return
+    # Load in-cluster config
     config.load_incluster_config()
     custom_api = client.CustomObjectsApi()
 
@@ -77,7 +113,7 @@ def apply_policy(policy):
         print("Cilium Network Policy updated successfully.")
     except ApiException as e:
         if e.status == 404:
-            # If it doesn't exist, create it
+            # If it doesn’t exist, create it
             try:
                 custom_api.create_namespaced_custom_object(
                     group="cilium.io",
